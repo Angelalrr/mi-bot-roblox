@@ -3,7 +3,7 @@ const { WebSocketServer } = require('ws');
 const express = require('express');
 const http = require('http');
 
-// Cargamos variables de entorno (para local)
+// Carga las variables de entorno (para PC local)
 require('dotenv').config();
 
 const TARGET_BOT_ID = '1490862148308566247';
@@ -21,39 +21,57 @@ const client = new Client({
   ]
 });
 
-// --- CONFIGURACIÓN DEL SERVIDOR WEB Y WEBSOCKET PARA RENDER ---
+// =========================================================
+// 1. CONFIGURACIÓN DEL SERVIDOR WEB Y WEBSOCKET (RENDER)
+// =========================================================
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Página web básica para que Render (y UptimeRobot) sepan que el bot está vivo
 app.get('/', (req, res) => {
-  res.send('Servidor de Discord y WebSocket funcionando correctamente! 🚀');
+  res.send('✅ Servidor Web y WebSocket activos correctamente.');
 });
 
 let robloxConnection = null;
 
 wss.on('connection', (ws) => {
-  console.log('✅ Roblox se ha conectado al WebSocket');
+  console.log('✅ [WEBSOCKET] Roblox se ha conectado!');
   robloxConnection = ws;
 
   ws.on('close', () => {
-    console.log('❌ Roblox se desconectó');
+    console.log('❌ [WEBSOCKET] Roblox se desconectó.');
     robloxConnection = null;
   });
 
   ws.on('error', (err) => {
-    console.error('⚠️ Error en conexión Roblox:', err.message);
+    console.error('⚠️ [WEBSOCKET] Error:', err.message);
   });
 });
 
-// Render asignará su propio puerto automáticamente aquí
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
-  console.log(`🌐 Servidor Web y WebSocket escuchando en el puerto ${PORT}`);
+  console.log(`🌐 [WEB] Escuchando en el puerto ${PORT}`);
 });
-// -----------------------------------------------------------------
 
+// =========================================================
+// 2. EVENTOS DE DEBUG EXTREMO PARA DISCORD
+// (Esto nos dirá si Render está bloqueando a Discord)
+// =========================================================
+client.on('debug', (info) => {
+  console.log(`[DEBUG DISCORD] ${info}`);
+});
+
+client.on('warn', (info) => {
+  console.log(`[WARN DISCORD] ${info}`);
+});
+
+client.on('error', (error) => {
+  console.error(`[ERROR FATAL DISCORD]`, error);
+});
+
+// =========================================================
+// 3. LÓGICA DE EXTRACCIÓN DE DATOS
+// =========================================================
 function getJobId(message) {
   const joinButton = message.components
     ?.flatMap(row => row.components ??[])
@@ -100,32 +118,69 @@ function parseBrainrots(embed, jobId) {
   return results;
 }
 
+// =========================================================
+// 4. LECTURA DE MENSAJES CON COMENTARIOS EN CONSOLA
+// =========================================================
+client.once('ready', () => {
+  console.log(`🤖 ¡ÉXITO! Conectado a Discord como ${client.user.tag}`);
+});
+
 client.on('messageCreate', (message) => {
-  if (message.author.id !== TARGET_BOT_ID) return;
-  if (!ALLOWED_CHANNELS.has(message.channel.id)) return;
-  if (!message.embeds?.length) return;
+  console.log(`📩[MENSAJE NUEVO] Autor: ${message.author.id} | Canal: ${message.channel.id}`);
+
+  if (message.author.id !== TARGET_BOT_ID) {
+    console.log(`🚫[IGNORADO] El mensaje no es del bot objetivo.`);
+    return;
+  }
+  
+  if (!ALLOWED_CHANNELS.has(message.channel.id)) {
+    console.log(`🚫 [IGNORADO] Es el bot objetivo, pero escribió en un canal NO permitido.`);
+    return;
+  }
+  
+  if (!message.embeds?.length) {
+    console.log(`🚫 [IGNORADO] El mensaje no tiene Embeds.`);
+    return;
+  }
 
   const jobId = getJobId(message);
+  console.log(`🔍 [PROCESANDO] Embed detectado. JobId encontrado: ${jobId || 'Ninguno'}`);
 
   for (const embed of message.embeds) {
-    if (!embed.title?.toLowerCase().includes('brainrot found')) continue;
+    if (!embed.title?.toLowerCase().includes('brainrot found')) {
+      console.log(`🚫 [IGNORADO] El título del Embed no es 'Brainrot found'. Título real: ${embed.title}`);
+      continue;
+    }
 
     const brainrots = parseBrainrots(embed, jobId);
+    
+    if (brainrots.length === 0) {
+      console.log(`⚠️[ADVERTENCIA] No se pudo leer el nombre ni el precio del Embed.`);
+    }
+
     for (const b of brainrots) {
       const dataString = JSON.stringify(b);
-      console.log('📤 Enviando a Roblox:', dataString);
+      console.log(`📤 [PREPARANDO ENVÍO] Datos: ${dataString}`);
 
       if (robloxConnection && robloxConnection.readyState === 1) {
         robloxConnection.send(dataString);
+        console.log(`✅ [ÉXITO] ¡Datos enviados a Roblox correctamente!`);
       } else {
-        console.log('⏳ Roblox no está conectado, mensaje ignorado.');
+        console.log(`⏳[FALLO] Roblox no está conectado al WebSocket en este momento. El mensaje se perdió.`);
       }
     }
   }
 });
 
-client.once('ready', () => {
-  console.log(`🤖 Conectado a Discord como ${client.user.tag}`);
-});
+// =========================================================
+// 5. INICIAR SESIÓN EN DISCORD
+// =========================================================
+console.log("⏳ [INICIANDO] Intentando conectar a Discord con el Token...");
 
-client.login(process.env.TOKEN);
+if (!process.env.TOKEN) {
+  console.error("❌ [ERROR] NO SE ENCONTRÓ EL TOKEN. Asegúrate de ponerlo en Render (Environment).");
+}
+
+client.login(process.env.TOKEN).catch((err) => {
+  console.error('❌ [ERROR FATAL AL INICIAR SESIÓN EN DISCORD]:', err);
+});
